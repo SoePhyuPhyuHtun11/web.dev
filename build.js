@@ -58,15 +58,18 @@ const virtualImports = {
         .slice(0, 12),
     firebaseConfig: isProd ? site.firebase.prod : site.firebase.staging,
   },
+  webdev_entrypoint: null,
 };
 
-const defaultPlugins = [
-  rollupPluginNodeResolve(),
-  rollupPluginCJS({
-    include: 'node_modules/**',
-  }),
-  rollupPluginVirtual(buildVirtualJSON(virtualImports)),
-];
+function buildDefaultPlugins() {
+  return [
+    rollupPluginNodeResolve(),
+    rollupPluginCJS({
+      include: 'node_modules/**',
+    }),
+    rollupPluginVirtual(buildVirtualJSON(virtualImports)),
+  ];
+}
 
 /**
  * Builds the cache manifest for inclusion into the Service Worker.
@@ -152,21 +155,29 @@ async function build() {
   const appBundle = await rollup.rollup({
     input: 'src/lib/bootstrap.js',
     external: disallowExternal,
-    plugins: [rollupPluginPostCSS(postcssConfig), ...defaultPlugins],
+    plugins: [rollupPluginPostCSS(postcssConfig), ...buildDefaultPlugins()],
   });
   const appGenerated = await appBundle.write({
     dynamicImportFunction: 'window._import',
+    entryFileNames: '[name]-[hash].js',
     sourcemap: true,
     dir: 'dist',
     format: 'esm',
   });
   const generated = appGenerated.output.map(({fileName}) => fileName);
 
+  // Save the entrypoint (which has a hashed name) for the all-browser loader code.
+  const entrypoints = appGenerated.output.filter(({isEntry}) => isEntry);
+  if (entrypoints.length !== 1) {
+    throw new Error(`expected single entrypoint, was: ${entrypoints.length}`);
+  }
+  virtualImports.webdev_entrypoint = entrypoints[0].fileName;
+
   // Rollup basic to generate the top-level script run by all browsers (even ancient ones). This is
   // just for Analytics.
   const pageviewBundle = await rollup.rollup({
     input: 'src/lib/pageview.js',
-    plugins: defaultPlugins,
+    plugins: buildDefaultPlugins(),
     external: disallowExternal,
   });
   const pageviewGenerated = await pageviewBundle.write({
@@ -219,7 +230,7 @@ async function build() {
           'layout-template': layoutTemplate,
         }),
       ),
-      ...defaultPlugins,
+      ...buildDefaultPlugins(),
       OMT(),
     ],
   });
